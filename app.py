@@ -13,7 +13,7 @@ uploaded_file = st.file_uploader("Wybierz plik PDF", type="pdf")
 
 DATA_LINE_PATTERN = re.compile(
     r'^\d{10}'                                    # Internal Style ID (10 cyfr)
-    r'([A-Z0-9]{1,10}-[A-Z0-9]{2,4}-[A-Z0-9]{0,6})'  # Vendor Style ID
+    r'([A-Z0-9]{1,10}-[A-Z0-9]{2,4}(?:-[A-Z0-9]{0,6})?)'  # Vendor Style ID (label opcjonalny)
     r'.+?'                                        # kolor + opis
     r'\s+(\d+)\s+EA\s+'                           # Total Units + EA
     r'(\d+\.\d{2})'                               # Vendor First Cost
