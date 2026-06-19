@@ -59,6 +59,32 @@ if uploaded_file is not None:
                 with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
                     df.to_excel(writer, index=False, sheet_name="PO Data")
                     ws = writer.sheets["PO Data"]
+
+                    # Wiersz z sumami na dole
+                    total_row = df.shape[0] + 2  # +1 nagłówek, +1 bo Excel 1-indexed
+                    total_units = df["Total Units"].sum()
+                    total_cost = (df["Total Units"] * df["Vendor First Cost (USD)"]).sum()
+
+                    ws.cell(row=total_row, column=1).value = "TOTAL"
+                    ws.cell(row=total_row, column=2).value = total_units
+                    ws.cell(row=total_row, column=3).value = round(total_cost, 2)
+
+                    # Pogrubienie wiersza z sumami
+                    from openpyxl.styles import Font, PatternFill, Alignment
+                    bold = Font(bold=True)
+                    fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+                    for col_idx in range(1, 4):
+                        cell = ws.cell(row=total_row, column=col_idx)
+                        cell.font = bold
+                        cell.fill = fill
+                        cell.alignment = Alignment(horizontal="center")
+
+                    # Format kolumny z kosztem jako waluta
+                    for row in ws.iter_rows(min_row=2, max_row=total_row, min_col=3, max_col=3):
+                        for cell in row:
+                            cell.number_format = '#,##0.00'
+
+                    # Auto-szerokość kolumn
                     for col in ws.columns:
                         max_len = max(len(str(cell.value or "")) for cell in col)
                         ws.column_dimensions[col[0].column_letter].width = max_len + 4
