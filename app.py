@@ -211,7 +211,7 @@ def write_excel_plain(rows):
         'Color': df['color'],
         'Label': df['label'],
         'Cost': df['Vendor First Cost (USD)'],
-        'SKU': '',
+        'SKU': df['SKU'] if 'SKU' in df.columns else '',
         'Pcs': df['Total Units'],
     })
 
@@ -269,6 +269,7 @@ if uploaded_file is not None:
                         'Color': color,
                         'Label': label,
                         'Cost': row['Vendor First Cost (USD)'],
+                        'SKU': row.get('SKU', ''),
                         'Pcs': row['Total Units'],
                     })
                 df_preview = pd.DataFrame(preview)
