@@ -32,9 +32,24 @@ NIKE_LINE_PATTERN = re.compile(
     r'\s+\$[\d,]+\.\d{2}'
 )
 
+# ── BABYLIST parser ────────────────────────────────────────────────────────────
+# Linia: BL-2229347 | 56M314-F0T | Huggies | ... $12.25 11 $134.75
+BABYLIST_PATTERN = re.compile(
+    r'^(BL-\d+)'
+    r'\s*\|\s*'
+    r'([A-Z0-9]{5,8})\s*-\s*([A-Z0-9]{3})'
+    r'(?:\s*-\s*([A-Z0-9]{2}))?'
+    r'\s*\|.+?'
+    r'\s+\$(\d+\.\d{2})'
+    r'\s+(\d+)'
+    r'\s+\$[\d,]+\.\d{2}$'
+)
+
 def detect_format(text):
     if 'MBKS Cost' in text or 'macysnet' in text.lower():
         return 'nike'
+    if 'BL Product ID' in text or 'WHSL Cost' in text or 'Babylist' in text:
+        return 'babylist'
     if 'Vendor First Cost' in text or ('EA' in text and re.search(r'\d{10}[A-Z0-9]', text)):
         return 'levis'
     return None
@@ -75,6 +90,25 @@ def extract_nike(pdf_file):
                     })
     return rows
 
+def extract_babylist(pdf_file):
+    rows = []
+    with pdfplumber.open(pdf_file) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if not text:
+                continue
+            for line in text.split("\n"):
+                line = line.strip()
+                m = BABYLIST_PATTERN.match(line)
+                if m:
+                    rows.append({
+                        "Vendor Style ID": f"{m.group(2)}-{m.group(3)}" + (f"-{m.group(4)}" if m.group(4) else ""),
+                        "Total Units": int(m.group(6)),
+                        "Vendor First Cost (USD)": float(m.group(5)),
+                        "SKU": m.group(1),
+                    })
+    return rows
+
 def extract_po_data(pdf_file):
     full_text = ""
     pdf_file.seek(0)
@@ -89,6 +123,8 @@ def extract_po_data(pdf_file):
 
     if fmt == 'nike':
         return extract_nike(pdf_file), "Nike / Macy's Backstage"
+    elif fmt == 'babylist':
+        return extract_babylist(pdf_file), 'Babylist / Huggies'
     elif fmt == 'levis':
         return extract_levis(pdf_file), "Levi's / Haddad"
     else:
@@ -100,6 +136,10 @@ def extract_po_data(pdf_file):
         rows = extract_nike(pdf_file)
         if rows:
             return rows, "Nike / Macy's Backstage"
+        pdf_file.seek(0)
+        rows = extract_babylist(pdf_file)
+        if rows:
+            return rows, 'Babylist / Huggies'
         return [], 'Nieznany'
 
 def split_style_id(vendor_style_id):
@@ -132,7 +172,7 @@ def write_excel_template(rows):
         ws.cell(row=r, column=3).value = color        # Color
         ws.cell(row=r, column=4).value = label        # Label
         ws.cell(row=r, column=5).value = row['Vendor First Cost (USD)']  # Cost
-        ws.cell(row=r, column=6).value = ''           # SKU - puste
+        ws.cell(row=r, column=6).value = row.get('SKU', '')              # SKU (BL Product ID dla Babylist)
         ws.cell(row=r, column=7).value = row['Total Units']              # Pcs
 
     # Wiersz TOTAL na dole
