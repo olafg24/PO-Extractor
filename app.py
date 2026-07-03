@@ -6,14 +6,12 @@ import io
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 
-st.set_page_config(page_title="PO PDF → Excel", page_icon="📦", layout="centered")
+st.set_page_config(page_title="PO Extractor", page_icon="📦", layout="centered")
 
-st.title("📦 PO Extractor – Vendor Style ID / Units / Cost")
-st.markdown("Wgraj plik PDF z Purchase Order (Levi's lub Nike/Macy's), a aplikacja wyciągnie dane i pozwoli pobrać Excel.")
+st.title("📦 PO Extractor")
 
-uploaded_file = st.file_uploader("Wybierz plik PDF", type="pdf")
+# ── PARSERY ────────────────────────────────────────────────────────────────────
 
-# ── LEVI'S parser ──────────────────────────────────────────────────────────────
 LEVIS_PATTERN = re.compile(
     r'^\d{10}'
     r'([A-Z0-9]{1,10}-[A-Z0-9]{2,4}(?:-[A-Z0-9]{0,6})?)'
@@ -22,7 +20,6 @@ LEVIS_PATTERN = re.compile(
     r'(\d+\.\d{2})'
 )
 
-# ── NIKE/MACY'S parser ─────────────────────────────────────────────────────────
 NIKE_LINE_PATTERN = re.compile(
     r'^\d{1,2}\s+'
     r'([A-Z0-9]{6}-[A-Z0-9]{3}(?:-[A-Z0-9]{2})?)'
@@ -32,8 +29,6 @@ NIKE_LINE_PATTERN = re.compile(
     r'\s+\$[\d,]+\.\d{2}'
 )
 
-# ── BABYLIST parser ────────────────────────────────────────────────────────────
-# Linia: BL-2229347 | 56M314-F0T | Huggies | ... $12.25 11 $134.75
 BABYLIST_PATTERN = re.compile(
     r'^(BL-\d+)'
     r'\s*\|\s*'
@@ -45,22 +40,12 @@ BABYLIST_PATTERN = re.compile(
     r'\s+\$[\d,]+\.\d{2}$'
 )
 
-def detect_format(text):
-    if 'MBKS Cost' in text or 'macysnet' in text.lower():
-        return 'nike'
-    if 'BL Product ID' in text or 'WHSL Cost' in text or 'Babylist' in text:
-        return 'babylist'
-    if 'Vendor First Cost' in text or ('EA' in text and re.search(r'\d{10}[A-Z0-9]', text)):
-        return 'levis'
-    return None
-
 def extract_levis(pdf_file):
     rows = []
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
             text = page.extract_text()
-            if not text:
-                continue
+            if not text: continue
             for line in text.split("\n"):
                 line = line.strip()
                 m = LEVIS_PATTERN.match(line)
@@ -69,6 +54,7 @@ def extract_levis(pdf_file):
                         "Vendor Style ID": m.group(1),
                         "Total Units": int(m.group(2)),
                         "Vendor First Cost (USD)": float(m.group(3)),
+                        "SKU": "",
                     })
     return rows
 
@@ -77,8 +63,7 @@ def extract_nike(pdf_file):
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
             text = page.extract_text()
-            if not text:
-                continue
+            if not text: continue
             for line in text.split("\n"):
                 line = line.strip()
                 m = NIKE_LINE_PATTERN.match(line)
@@ -87,6 +72,7 @@ def extract_nike(pdf_file):
                         "Vendor Style ID": m.group(1),
                         "Total Units": int(m.group(3)),
                         "Vendor First Cost (USD)": float(m.group(2)),
+                        "SKU": "",
                     })
     return rows
 
@@ -95,8 +81,7 @@ def extract_babylist(pdf_file):
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
             text = page.extract_text()
-            if not text:
-                continue
+            if not text: continue
             for line in text.split("\n"):
                 line = line.strip()
                 m = BABYLIST_PATTERN.match(line)
@@ -109,46 +94,15 @@ def extract_babylist(pdf_file):
                     })
     return rows
 
-def extract_po_data(pdf_file):
-    full_text = ""
-    pdf_file.seek(0)
-    with pdfplumber.open(pdf_file) as pdf:
-        for page in pdf.pages:
-            t = page.extract_text()
-            if t:
-                full_text += t
+ACCOUNT_PARSER = {
+    "C810M": extract_levis,
+    "B614M": extract_babylist,
+    "M004M": extract_nike,
+}
 
-    fmt = detect_format(full_text)
-    pdf_file.seek(0)
-
-    if fmt == 'nike':
-        return extract_nike(pdf_file), "Nike / Macy's Backstage"
-    elif fmt == 'babylist':
-        return extract_babylist(pdf_file), 'Babylist / Huggies'
-    elif fmt == 'levis':
-        return extract_levis(pdf_file), "Levi's / Haddad"
-    else:
-        pdf_file.seek(0)
-        rows = extract_levis(pdf_file)
-        if rows:
-            return rows, "Levi's / Haddad"
-        pdf_file.seek(0)
-        rows = extract_nike(pdf_file)
-        if rows:
-            return rows, "Nike / Macy's Backstage"
-        pdf_file.seek(0)
-        rows = extract_babylist(pdf_file)
-        if rows:
-            return rows, 'Babylist / Huggies'
-        return [], 'Nieznany'
+# ── HELPERS ────────────────────────────────────────────────────────────────────
 
 def split_style_id(vendor_style_id):
-    """
-    Rozbija Vendor Style ID na części:
-      76F026-023-P3  → style=76F026, color=023, label=P3
-      76F026-023     → style=76F026, color=023, label=''
-      76F026         → style=76F026, color='',  label=''
-    """
     parts = vendor_style_id.split('-')
     style = parts[0] if len(parts) > 0 else ''
     color = parts[1] if len(parts) > 1 else ''
@@ -156,42 +110,34 @@ def split_style_id(vendor_style_id):
     return style, color, label
 
 def write_excel_template(rows):
-    """Wstawia dane do szablonu In-LineCart."""
-    # Wczytaj szablon z dysku (Sheet1 jako docelowy arkusz)
     TEMPLATE_PATH = 'In-LineCart_template.xlsx'
     wb = load_workbook(TEMPLATE_PATH)
     ws = wb['Sheet1']
-
-    # Kolumny w szablonie: A=Div, B=Style#, C=Color, D=Label, E=Cost, F=SKU, G=Pcs
     start_row = 2
     for i, row in enumerate(rows):
         style, color, label = split_style_id(row['Vendor Style ID'])
         r = start_row + i
-        ws.cell(row=r, column=1).value = ''           # Div - puste
-        ws.cell(row=r, column=2).value = style        # Style#
-        ws.cell(row=r, column=3).value = color        # Color
-        ws.cell(row=r, column=4).value = label        # Label
-        ws.cell(row=r, column=5).value = row['Vendor First Cost (USD)']  # Cost
-        ws.cell(row=r, column=6).value = row.get('SKU', '')              # SKU (BL Product ID dla Babylist)
-        ws.cell(row=r, column=7).value = row['Total Units']              # Pcs
+        ws.cell(row=r, column=1).value = ''
+        ws.cell(row=r, column=2).value = style
+        ws.cell(row=r, column=3).value = color
+        ws.cell(row=r, column=4).value = label
+        ws.cell(row=r, column=5).value = row['Vendor First Cost (USD)']
+        ws.cell(row=r, column=6).value = row.get('SKU', '')
+        ws.cell(row=r, column=7).value = row['Total Units']
 
-    # Wiersz TOTAL na dole
     total_row = start_row + len(rows)
     total_units = sum(r['Total Units'] for r in rows)
     total_cost = sum(r['Total Units'] * r['Vendor First Cost (USD)'] for r in rows)
-
     ws.cell(row=total_row, column=2).value = 'TOTAL'
     ws.cell(row=total_row, column=5).value = round(total_cost, 2)
     ws.cell(row=total_row, column=7).value = total_units
-
     bold = Font(bold=True)
     fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
-    center = Alignment(horizontal="center")
     for col_idx in [2, 5, 7]:
         cell = ws.cell(row=total_row, column=col_idx)
         cell.font = bold
         cell.fill = fill
-        cell.alignment = center
+        cell.alignment = Alignment(horizontal="center")
 
     buffer = io.BytesIO()
     wb.save(buffer)
@@ -199,12 +145,10 @@ def write_excel_template(rows):
     return buffer
 
 def write_excel_plain(rows):
-    """Fallback - prosty Excel bez szablonu (gdy szablon nie jest wgrany)."""
     df = pd.DataFrame(rows)
     df['style'] = df['Vendor Style ID'].apply(lambda x: x.split('-')[0])
     df['color'] = df['Vendor Style ID'].apply(lambda x: x.split('-')[1] if len(x.split('-')) > 1 else '')
     df['label'] = df['Vendor Style ID'].apply(lambda x: x.split('-')[2] if len(x.split('-')) > 2 else '')
-
     out = pd.DataFrame({
         'Div': '',
         'Style#': df['style'],
@@ -214,20 +158,14 @@ def write_excel_plain(rows):
         'SKU': df['SKU'] if 'SKU' in df.columns else '',
         'Pcs': df['Total Units'],
     })
-
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         out.to_excel(writer, index=False, sheet_name="Sheet1")
         ws = writer.sheets["Sheet1"]
-
         total_row = len(out) + 2
-        total_units = df['Total Units'].sum()
-        total_cost = (df['Total Units'] * df['Vendor First Cost (USD)']).sum()
-
         ws.cell(row=total_row, column=2).value = 'TOTAL'
-        ws.cell(row=total_row, column=5).value = round(total_cost, 2)
-        ws.cell(row=total_row, column=7).value = total_units
-
+        ws.cell(row=total_row, column=5).value = round(df['Total Units'].mul(df['Vendor First Cost (USD)']).sum(), 2)
+        ws.cell(row=total_row, column=7).value = int(df['Total Units'].sum())
         bold = Font(bold=True)
         fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
         for col_idx in [2, 5, 7]:
@@ -235,74 +173,120 @@ def write_excel_plain(rows):
             cell.font = bold
             cell.fill = fill
             cell.alignment = Alignment(horizontal="center")
-
         for col in ws.columns:
             max_len = max(len(str(cell.value or "")) for cell in col)
             ws.column_dimensions[col[0].column_letter].width = max_len + 4
-
     buffer.seek(0)
     return buffer
 
-
 # ── UI ─────────────────────────────────────────────────────────────────────────
 
-template_file = st.file_uploader(
-    "📋 Wgraj szablon Excel (In-LineCart) — opcjonalnie",
-    type=["xlsx"],
-    help="Jeśli wgrasz szablon, dane zostaną wstawione do Sheet1. Bez szablonu aplikacja wygeneruje plik samodzielnie."
-)
+# Inicjalizacja stanu
+if "selected_account" not in st.session_state:
+    st.session_state.selected_account = None
 
-if uploaded_file is not None:
-    with st.spinner("Przetwarzam PDF..."):
-        try:
-            rows, detected_format = extract_po_data(uploaded_file)
+# Kafelki kont
+st.markdown("### Wybierz konto")
 
-            if not rows:
-                st.error("Nie udało się wyciągnąć danych. Sprawdź czy plik jest właściwym PO PDF.")
-            else:
-                # Podgląd rozbitych danych
-                preview = []
-                for row in rows:
-                    style, color, label = split_style_id(row['Vendor Style ID'])
-                    preview.append({
-                        'Style#': style,
-                        'Color': color,
-                        'Label': label,
-                        'Cost': row['Vendor First Cost (USD)'],
-                        'SKU': row.get('SKU', ''),
-                        'Pcs': row['Total Units'],
-                    })
-                df_preview = pd.DataFrame(preview)
+ACCOUNTS = [
+    {"name": "C810M", "color": "#1f4e79", "desc": "Century 21 / Haddad"},
+    {"name": "B614M", "color": "#375623", "desc": "Babylist / Huggies"},
+    {"name": "M004M", "color": "#7b2c2c", "desc": "Macy's Backstage"},
+]
 
-                st.info(f"📄 Wykryty format: **{detected_format}**")
-                st.success(f"✅ Wyciągnięto **{len(rows)}** pozycji z PDF.")
-                st.dataframe(df_preview, use_container_width=True)
+cols = st.columns(len(ACCOUNTS))
+for col, acc in zip(cols, ACCOUNTS):
+    with col:
+        is_selected = st.session_state.selected_account == acc["name"]
+        border = "4px solid #FFD700" if is_selected else "2px solid transparent"
+        st.markdown(
+            f"""
+            <div style="
+                background-color: {acc['color']};
+                border: {border};
+                border-radius: 12px;
+                padding: 20px 10px;
+                text-align: center;
+                margin-bottom: 8px;
+            ">
+                <div style="color: white; font-size: 22px; font-weight: bold;">{acc['name']}</div>
+                <div style="color: #ccc; font-size: 12px; margin-top: 4px;">{acc['desc']}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "✓ Wybrano" if is_selected else "Wybierz",
+            key=f"btn_{acc['name']}",
+            use_container_width=True,
+        ):
+            st.session_state.selected_account = acc["name"]
+            st.rerun()
 
-                col1, col2 = st.columns(2)
-                total_units = sum(r['Total Units'] for r in rows)
-                total_cost = sum(r['Total Units'] * r['Vendor First Cost (USD)'] for r in rows)
-                col1.metric("Łączna liczba jednostek", f"{total_units:,}")
-                col2.metric("Łączny koszt (USD)", f"${total_cost:,.2f}")
+# Pokaż resztę UI tylko gdy konto jest wybrane
+if st.session_state.selected_account:
+    account = st.session_state.selected_account
+    st.success(f"✅ Wybrane konto: **{account}**")
+    st.divider()
 
-                # Generuj Excel
-                if template_file is not None:
-                    # Zapisz szablon tymczasowo na dysk żeby openpyxl mógł go wczytać
-                    template_bytes = template_file.read()
-                    with open('In-LineCart_template.xlsx', 'wb') as f:
-                        f.write(template_bytes)
-                    buffer = write_excel_template(rows)
-                    filename = "In-LineCart_filled.xlsx"
+    uploaded_file = st.file_uploader("Wybierz plik PDF", type="pdf")
+
+    template_file = st.file_uploader(
+        "📋 Wgraj szablon Excel (In-LineCart) — opcjonalnie",
+        type=["xlsx"],
+        help="Jeśli wgrasz szablon, dane zostaną wstawione do Sheet1."
+    )
+
+    if uploaded_file is not None:
+        with st.spinner("Przetwarzam PDF..."):
+            try:
+                parser = ACCOUNT_PARSER[account]
+                rows = parser(uploaded_file)
+
+                if not rows:
+                    st.error("Nie udało się wyciągnąć danych. Sprawdź czy wgrałeś właściwy plik dla tego konta.")
                 else:
-                    buffer = write_excel_plain(rows)
-                    filename = "po_data.xlsx"
+                    preview = []
+                    for row in rows:
+                        style, color, label = split_style_id(row['Vendor Style ID'])
+                        preview.append({
+                            'Style#': style,
+                            'Color': color,
+                            'Label': label,
+                            'Cost': row['Vendor First Cost (USD)'],
+                            'SKU': row.get('SKU', ''),
+                            'Pcs': row['Total Units'],
+                        })
+                    df_preview = pd.DataFrame(preview)
 
-                st.download_button(
-                    label="⬇️ Pobierz Excel",
-                    data=buffer,
-                    file_name=filename,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
+                    st.success(f"✅ Wyciągnięto **{len(rows)}** pozycji z PDF.")
+                    st.dataframe(df_preview, use_container_width=True)
 
-        except Exception as e:
-            st.error(f"Błąd podczas przetwarzania: {e}")
-            st.exception(e)
+                    col1, col2 = st.columns(2)
+                    total_units = sum(r['Total Units'] for r in rows)
+                    total_cost = sum(r['Total Units'] * r['Vendor First Cost (USD)'] for r in rows)
+                    col1.metric("Łączna liczba jednostek", f"{total_units:,}")
+                    col2.metric("Łączny koszt (USD)", f"${total_cost:,.2f}")
+
+                    if template_file is not None:
+                        template_bytes = template_file.read()
+                        with open('In-LineCart_template.xlsx', 'wb') as f:
+                            f.write(template_bytes)
+                        buffer = write_excel_template(rows)
+                        filename = "In-LineCart_filled.xlsx"
+                    else:
+                        buffer = write_excel_plain(rows)
+                        filename = "po_data.xlsx"
+
+                    st.download_button(
+                        label="⬇️ Pobierz Excel",
+                        data=buffer,
+                        file_name=filename,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+
+            except Exception as e:
+                st.error(f"Błąd podczas przetwarzania: {e}")
+                st.exception(e)
+else:
+    st.info("👆 Najpierw wybierz konto powyżej.")
