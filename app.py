@@ -6,6 +6,7 @@ import io
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 
+# v2.5 - fix: label jednoznakowy z myslnikiem (-V, -W), podwojny myslnik w stylu
 st.set_page_config(page_title="PO Extractor", page_icon="📦", layout="centered")
 
 st.title("📦 PO Extractor")
