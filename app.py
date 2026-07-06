@@ -22,7 +22,7 @@ LEVIS_PATTERN = re.compile(
 
 NIKE_LINE_PATTERN = re.compile(
     r'^\d{1,2}\s+'
-    r'([A-Z0-9]{6}-[A-Z0-9]{3}(?:-[A-Z0-9]{2})?)'
+    r'([A-Z0-9]{6}-[A-Z0-9]{3}(?:-{1,2}[A-Z0-9]{1,2})?)'  # -{1,2} obsługuje -- przed labelem
     r'\s+.+?'
     r'\s+\$(\d+\.\d{2})'
     r'\s+(\d+)'
