@@ -103,10 +103,17 @@ ACCOUNT_PARSER = {
 # ── HELPERS ────────────────────────────────────────────────────────────────────
 
 def split_style_id(vendor_style_id):
+    # Obsługuje zarówno pojedynczy myślnik (86F633-023-WH)
+    # jak i podwójny myślnik (86M344-U90--V)
+    import re as _re
+    m = _re.match(r'^([A-Z0-9]+)-([A-Z0-9]+)-{1,2}([A-Z0-9]{1,2})$', vendor_style_id)
+    if m:
+        label = ('-' + m.group(3)) if len(m.group(3)) == 1 else m.group(3)
+        return m.group(1), m.group(2), label
     parts = vendor_style_id.split('-')
     style = parts[0] if len(parts) > 0 else ''
     color = parts[1] if len(parts) > 1 else ''
-    label = parts[2] if len(parts) > 2 else ''
+    label = ''
     return style, color, label
 
 def write_excel_template(rows):
