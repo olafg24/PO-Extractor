@@ -154,9 +154,9 @@ def write_excel_template(rows):
 
 def write_excel_plain(rows):
     df = pd.DataFrame(rows)
-    df['style'] = df['Vendor Style ID'].apply(lambda x: x.split('-')[0])
-    df['color'] = df['Vendor Style ID'].apply(lambda x: x.split('-')[1] if len(x.split('-')) > 1 else '')
-    df['label'] = df['Vendor Style ID'].apply(lambda x: x.split('-')[2] if len(x.split('-')) > 2 else '')
+    df['style'] = df['Vendor Style ID'].apply(lambda x: split_style_id(x)[0])
+    df['color'] = df['Vendor Style ID'].apply(lambda x: split_style_id(x)[1])
+    df['label'] = df['Vendor Style ID'].apply(lambda x: split_style_id(x)[2])
     out = pd.DataFrame({
         'Div': '',
         'Style#': df['style'],
