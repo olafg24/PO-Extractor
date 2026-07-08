@@ -77,6 +77,64 @@ def extract_nike(pdf_file):
                     })
     return rows
 
+def extract_sierra(pdf_file):
+    """Parser dla S894M (Sierra/TJX). Sumuje unity per styl, rozdziela 0810/0860.
+    Dwa przebiegi: najpierw ceny (przed tabelką DC), potem unity (tabelki DC).
+    Działa poprawnie gdy ceny i tabelka DC są na tej samej stronie."""
+    from collections import defaultdict
+    style_prices = {}
+    style_units  = defaultdict(lambda: {'units_0810': 0, 'units_0860': 0})
+
+    STYLE_PAGE1 = re.compile(r'^\d{1,2}/\d{1,2}/\d{4}\s+([A-Z0-9]{6}-[A-Z0-9]{3}(?:-{1,2}[A-Z0-9]{1,2})?),?')
+    PRICE_LINE  = re.compile(r'^\d[\d,]*\s+\$(\d+\.\d{2})\s+\$[\d,]+\.\d{2}$')
+    DC_ROW      = re.compile(r'^([A-Z0-9]{6}-[A-Z0-9]{3}(?:-{1,2}[A-Z0-9]{1,2})?),?\s+\S+\s+.+?\s+\S+\s+(\d+)\s+(\d+)\s+(\d+)\s*$')
+    DC_HEADER   = re.compile(r'^Vendor Styles\s+Item Code')
+
+    all_lines = []
+    with pdfplumber.open(pdf_file) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if text:
+                all_lines.extend([l.strip() for l in text.split("\n") if l.strip()])
+
+    # Znajdź gdzie zaczyna się pierwsza tabelka DC
+    dc_start_idx = next((i for i, l in enumerate(all_lines) if DC_HEADER.match(l)), None)
+
+    # Przebieg 1: ceny TYLKO przed tabelką DC
+    current_style = None
+    for line in (all_lines[:dc_start_idx] if dc_start_idx else all_lines):
+        m = STYLE_PAGE1.match(line)
+        if m: current_style = m.group(1)
+        m = PRICE_LINE.match(line)
+        if m and current_style:
+            style_prices[current_style] = float(m.group(1))
+            current_style = None
+
+    # Przebieg 2: unity z tabelek DC (kontynuuje przez kolejne strony)
+    in_dc = False
+    for line in all_lines:
+        if DC_HEADER.match(line):
+            in_dc = True
+            continue
+        if in_dc:
+            m = DC_ROW.match(line)
+            if m:
+                vid = m.group(1)
+                style_units[vid]['units_0810'] += int(m.group(3))
+                style_units[vid]['units_0860'] += int(m.group(4))
+
+    rows = []
+    for vid, units in style_units.items():
+        rows.append({
+            'Vendor Style ID': vid,
+            'Total Units': units['units_0810'] + units['units_0860'],
+            'Vendor First Cost (USD)': style_prices.get(vid, 0.0),
+            'SKU': '',
+            'units_0810': units['units_0810'],
+            'units_0860': units['units_0860'],
+        })
+    return rows
+
 def extract_babylist(pdf_file):
     rows = []
     with pdfplumber.open(pdf_file) as pdf:
@@ -99,6 +157,7 @@ ACCOUNT_PARSER = {
     "C810M": extract_levis,
     "B614M": extract_babylist,
     "M004M": extract_nike,
+    "S894M": extract_sierra,
 }
 
 # ── HELPERS ────────────────────────────────────────────────────────────────────
@@ -116,6 +175,84 @@ def split_style_id(vendor_style_id):
     color = parts[1] if len(parts) > 1 else ''
     label = ''
     return style, color, label
+
+def write_excel_sierra(rows):
+    """Excel dla S894M - szablon MultistoreCart z kolumnami G=0810, H=0860."""
+    TEMPLATE_PATH = 'In-LineCart_template.xlsx'
+    wb = load_workbook(TEMPLATE_PATH)
+    ws = wb['Sheet1']
+    # Kolumny: A=Div, B=Style#, C=Color, D=Label, E=Price, F=SKU, G=0810 Units, H=0860 Units
+    start_row = 2
+    for i, row in enumerate(rows):
+        style, color, label = split_style_id(row['Vendor Style ID'])
+        r = start_row + i
+        ws.cell(row=r, column=1).value = ''
+        ws.cell(row=r, column=2).value = style
+        ws.cell(row=r, column=3).value = color
+        ws.cell(row=r, column=4).value = label
+        ws.cell(row=r, column=5).value = row['Vendor First Cost (USD)']
+        ws.cell(row=r, column=6).value = row.get('SKU', '')
+        ws.cell(row=r, column=7).value = row.get('units_0810', 0)
+        ws.cell(row=r, column=8).value = row.get('units_0860', 0)
+
+    total_row = start_row + len(rows)
+    total_0810 = sum(r.get('units_0810', 0) for r in rows)
+    total_0860 = sum(r.get('units_0860', 0) for r in rows)
+    total_cost = sum(r['Total Units'] * r['Vendor First Cost (USD)'] for r in rows)
+    ws.cell(row=total_row, column=2).value = 'TOTAL'
+    ws.cell(row=total_row, column=5).value = round(total_cost, 2)
+    ws.cell(row=total_row, column=7).value = total_0810
+    ws.cell(row=total_row, column=8).value = total_0860
+
+    bold = Font(bold=True)
+    fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+    for col_idx in [2, 5, 7, 8]:
+        cell = ws.cell(row=total_row, column=col_idx)
+        cell.font = bold
+        cell.fill = fill
+        cell.alignment = Alignment(horizontal="center")
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+def write_excel_sierra_plain(rows):
+    """Fallback bez szablonu dla S894M."""
+    out_data = []
+    for row in rows:
+        style, color, label = split_style_id(row['Vendor Style ID'])
+        out_data.append({
+            'Div': '',
+            'Style#': style,
+            'Color': color,
+            'Label': label,
+            'Price': row['Vendor First Cost (USD)'],
+            'SKU': '',
+            '0810 Units': row.get('units_0810', 0),
+            '0860 Units': row.get('units_0860', 0),
+        })
+    df = pd.DataFrame(out_data)
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Sheet1")
+        ws = writer.sheets["Sheet1"]
+        total_row = len(df) + 2
+        ws.cell(row=total_row, column=2).value = 'TOTAL'
+        ws.cell(row=total_row, column=5).value = round(sum(r['Total Units']*r['Vendor First Cost (USD)'] for r in rows), 2)
+        ws.cell(row=total_row, column=7).value = sum(r.get('units_0810', 0) for r in rows)
+        ws.cell(row=total_row, column=8).value = sum(r.get('units_0860', 0) for r in rows)
+        bold = Font(bold=True)
+        fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+        for col_idx in [2, 5, 7, 8]:
+            cell = ws.cell(row=total_row, column=col_idx)
+            cell.font = bold
+            cell.fill = fill
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or "")) for cell in col)
+            ws.column_dimensions[col[0].column_letter].width = max_len + 4
+    buffer.seek(0)
+    return buffer
 
 def write_excel_template(rows):
     TEMPLATE_PATH = 'In-LineCart_template.xlsx'
@@ -200,6 +337,7 @@ ACCOUNTS = [
     {"name": "C810M", "color": "#1f4e79", "desc": "Century 21 / Haddad"},
     {"name": "B614M", "color": "#375623", "desc": "Babylist / Huggies"},
     {"name": "M004M", "color": "#7b2c2c", "desc": "Macy's Backstage"},
+    {"name": "S894M", "color": "#4a235a", "desc": "Sierra / TJX"},
 ]
 
 cols = st.columns(len(ACCOUNTS))
@@ -276,7 +414,17 @@ if st.session_state.selected_account:
                     col1.metric("Łączna liczba jednostek", f"{total_units:,}")
                     col2.metric("Łączny koszt (USD)", f"${total_cost:,.2f}")
 
-                    if template_file is not None:
+                    if account == "S894M":
+                        if template_file is not None:
+                            template_bytes = template_file.read()
+                            with open('In-LineCart_template.xlsx', 'wb') as f:
+                                f.write(template_bytes)
+                            buffer = write_excel_sierra(rows)
+                            filename = "MultistoreCart_filled.xlsx"
+                        else:
+                            buffer = write_excel_sierra_plain(rows)
+                            filename = "po_data_sierra.xlsx"
+                    elif template_file is not None:
                         template_bytes = template_file.read()
                         with open('In-LineCart_template.xlsx', 'wb') as f:
                             f.write(template_bytes)
