@@ -229,8 +229,8 @@ def write_excel_sierra_plain(rows):
             'Label': label,
             'Price': row['Vendor First Cost (USD)'],
             'SKU': '',
-            '0810 Units': row.get('units_0810', 0),
-            '0860 Units': row.get('units_0860', 0),
+            '': row.get('units_0810', 0),
+            '3': row.get('units_0860', 0),
         })
     df = pd.DataFrame(out_data)
     buffer = io.BytesIO()
